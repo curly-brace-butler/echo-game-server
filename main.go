@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"github.com/caarlos0/env"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -21,7 +23,7 @@ func main() {
 	go func() {
 		ctx := signals.NewSigKillContext()
 		<-ctx.Done()
-		log.Println("Exit signal received. Shutting down.")
+		log.Println("Exit signal. Shutting down.")
 		os.Exit(0)
 	}()
 
@@ -34,7 +36,7 @@ func main() {
 
 	// Init director SDK
 	log.Print("Creating SDK instance")
-	s, err := sdk.NewSDK()
+	agones, err := sdk.NewSDK()
 	if err != nil {
 		log.Fatalf("Could not connect to sdk: %v", err)
 	}
@@ -46,7 +48,7 @@ func main() {
 		tick := time.Tick(2 * time.Second)
 		for {
 			log.Printf("Sending a health ping")
-			err := s.Health()
+			err := agones.Health()
 			if err != nil {
 				log.Fatalf("Failed to send health ping, %v", err)
 			}
@@ -59,10 +61,11 @@ func main() {
 		}
 	}()
 
-	// TODO: Initialize sockets, continuously listen and serve
+	// TODO: Initialize sockets, continuously listen and serve.
+	go tcpListener(conf.HTTP_PORT, agones)
 
 	log.Print("Marking this server as ready")
-	if err := s.Ready(); err != nil {
+	if err := agones.Ready(); err != nil {
 		log.Fatalf("Could not send ready message")
 	}
 
@@ -70,6 +73,34 @@ func main() {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	wg.Wait()
+}
+
+func tcpListener(port string, agones *sdk.SDK) error {
+	log.Printf("Starting socket server, listening on port %s", port)
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("Failed to listen for tcp connections on port %v" + port)
+	}
+	defer ln.Close()
+
+	es := newEchoServer()
+	serv := &http.Server{
+		Handler:      es,
+		ReadTimeout:  time.Second * 10,
+		WriteTimeout: time.Second * 10,
+	}
+
+	// Listen and serve until serving returns an error
+	errc := make(chan error, 1)
+	go func() {
+		agones.Ready()
+		errc <- serv.Serve(ln)
+	}()
+
+	fmt.Errorf("failed to serve: %v", <-errc)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	return serv.Shutdown(ctx)
 }
 
 func setupConfig() (*config, error) {
