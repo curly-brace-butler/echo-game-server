@@ -61,13 +61,8 @@ func main() {
 		}
 	}()
 
-	// TODO: Initialize sockets, continuously listen and serve.
+	// Initialize sockets, continuously listen and serve.
 	go tcpListener(conf.HTTP_PORT, agones)
-
-	log.Print("Marking this server as ready")
-	if err := agones.Ready(); err != nil {
-		log.Fatalf("Could not send ready message")
-	}
 
 	// Halt this thread indefinitely
 	wg := sync.WaitGroup{}
@@ -93,7 +88,10 @@ func tcpListener(port string, agones *sdk.SDK) error {
 	// Listen and serve until serving returns an error
 	errc := make(chan error, 1)
 	go func() {
-		agones.Ready()
+		log.Print("Marking this server as ready")
+		if err := agones.Ready(); err != nil {
+			log.Fatalf("Could not send ready message")
+		}
 		errc <- serv.Serve(ln)
 	}()
 
